@@ -323,6 +323,22 @@ impl Window {
         Ok(())
     }
 
+    pub fn remove_menu_entry(&self, item_idx: u32, item_name: &String) -> Result<(), SystrayError> {
+        let mut st = to_wstring(item_name);
+        let mut item = get_menu_item_struct();
+        item.fMask = MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE;
+        item.fType = MFT_STRING;
+        item.wID = item_idx;
+        item.dwTypeData = st.as_mut_ptr();
+        item.cch = (item_name.len() * 2) as u32;
+        unsafe {
+            if user32::DeleteMenu(self.info.hmenu, item_idx, 0) == 0 {
+                return Err(get_win_os_error("Error inserting menu item"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn add_menu_separator(&self, item_idx: u32) -> Result<(), SystrayError> {
         let mut item = get_menu_item_struct();
         item.fMask = MIIM_FTYPE;
@@ -393,7 +409,7 @@ impl Window {
         };
 
         if offset != 0 {
-            let icon_data = &buffer[offset as usize ..];
+            let icon_data = &buffer[(offset as usize)..];
             let hicon = unsafe {
                 user32::CreateIconFromResourceEx(
                     icon_data.as_ptr() as PBYTE,

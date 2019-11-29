@@ -47,6 +47,12 @@ pub struct Application {
     window: api::api::Window,
     menu_idx: u32,
     callback: HashMap<u32, Callback>,
+
+    /// Keep track of the index that we insert items
+    /// with so that we can dispose of them in the future
+    items: HashMap<String, u32>,
+    items_reversed: HashMap<u32, String>,
+
     // Each platform-specific window module will set up its own thread for
     // dealing with the OS main loop. Use this channel for receiving events from
     // that thread.
@@ -68,6 +74,8 @@ impl Application {
                 window: w,
                 menu_idx: 0,
                 callback: HashMap::new(),
+                items: HashMap::new(),
+                items_reversed: HashMap::new(),
                 rx: event_rx
             }),
             Err(e) => Err(e)
@@ -80,9 +88,31 @@ impl Application {
         if let Err(e) = self.window.add_menu_entry(idx, item_name) {
             return Err(e);
         }
+
+        self.items.insert(item_name.clone().to_string(), idx);
+        self.items_reversed.insert(idx, item_name.clone());
         self.callback.insert(idx, make_callback(f));
         self.menu_idx += 1;
+
         Ok(idx)
+    }
+
+    #[cfg(windows)]
+    pub fn remove_menu_item(&mut self, item_name: &String) -> Result<(), SystrayError> {
+        match self.items.get(item_name) {
+            Some(idx) => {
+                if let Err(e) = self.window.remove_menu_entry(*idx, item_name) {
+                    return Err(e)
+                }
+
+                // We got the item, so we know we can remove it
+                let idx = self.items.remove(item_name).expect("Failed to remove item from HashSet");
+                self.items_reversed.remove(&idx).expect("Failed to remove item from reversed HashSet");
+
+                Ok(())
+            },
+            None => Ok(())
+        }
     }
 
     pub fn add_menu_separator(&mut self) -> Result<u32, SystrayError> {
@@ -128,6 +158,35 @@ impl Application {
                 let f = self.callback.remove(&msg.menu_index).unwrap();
                 f(self);
                 self.callback.insert(msg.menu_index, f);
+            }
+        }
+    }
+
+    /// Wait for message and transmit the app object to the
+    /// given callback
+    pub fn wait_for_message_callback<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Self, String)
+    {
+        loop {
+            let msg;
+            match self.rx.recv() {
+                Ok(m) => msg = m,
+                Err(_) => {
+                    self.quit();
+                    break;
+                }
+            }
+
+            if self.callback.contains_key(&msg.menu_index) {
+                // TODO: Why are we removing from the HashSet every
+                // time we want to use a callback? 
+                let cb = self.callback.remove(&msg.menu_index).unwrap();
+                cb(self);
+                self.callback.insert(msg.menu_index, cb);
+                
+                let item_name = self.items_reversed.get(&msg.menu_index).unwrap().clone();
+                f(self, item_name);
             }
         }
     }
